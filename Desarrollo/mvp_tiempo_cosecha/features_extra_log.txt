@@ -1,0 +1,15 @@
+Landmarks: 24861 | match features nuevas: 100.0%
+
+==================================================================================
+ABLACIÓN — aporte de las features nuevas (LightGBM tuneado)
+==================================================================================
+Feature set                            |  CV-MAE  MedAE   RMSE | Tmp-MAE   RMSE
+DEFINITIVO (base+clima+historia)       |   2.820   2.05   4.10 |   3.116   4.20
++ FOTO                                 |   2.744   1.98   3.99 |   3.229   4.30  (-2.7%)
++ VENT                                 |   2.778   2.00   4.10 |   3.478   4.66  (-1.5%)
++ RANGO                                |   2.872   2.07   4.16 |   3.319   4.44  (+1.8%)
++ TANQUE                               |   2.775   2.05   4.00 |   3.622   4.75  (-1.6%)
++ EVENT                                |   2.900   2.18   4.15 |   3.435   4.55  (+2.8%)
++ TODAS las nuevas                     |   2.722   1.98   4.01 |   4.131   5.26  (-3.5%)
+
+(CV = GroupKFold por cosecha; Tmp = test temporal último año. % vs DEFINITIVO en CV.)

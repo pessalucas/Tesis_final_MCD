@@ -1,0 +1,466 @@
+#!/usr/bin/env python3
+"""
+extractor_hidroponia.py
+=======================
+Convierte la planilla "Seguimiento de Parámetros" (registro manual de hidroponía)
+en un dataset tabular limpio, recuperando la información que está codificada en
+el FORMATO de las celdas y no en su contenido.
+
+Por qué existe este script
+--------------------------
+La planilla original guarda tres cosas distintas en cada celda:
+
+  1. El VALOR      -> pH y PPM/EC medidos ese día.
+  2. El RELLENO    -> a qué tanque está conectada esa tanda (color sólido de fondo).
+  3. El BORDE INFERIOR -> qué evento de manejo ocurrió ese día (color de la línea).
+
+Un export a CSV descarta (2) y (3), que es donde vive la mayor parte de la
+información operativa. Este script lee el .xlsx con openpyxl y los recupera.
+
+Layout de la planilla
+---------------------
+  - Columna A: día de la semana. Columna B: fecha.
+  - De la columna C en adelante: pares de columnas (pH, PPM) — una TANDA por par.
+  - Cada COSECHA ocupa varios pares contiguos. La etiqueta ("T202 Alb") se
+    escribe UNA fila ARRIBA del primer día de datos, repetida en cada par.
+  - Las cosechas se agregan hacia la derecha a medida que pasa el tiempo, en
+    diagonal (fila = fecha de inicio, columna = espacio nuevo).
+  - El string "-" significa dato faltante -> se persiste como null.
+
+Grano de salida
+---------------
+  Una fila por COSECHA x TANDA x FECHA.
+  (ID_COSECHA, ID_TANDA) identifica un par de columnas de forma única.
+
+Uso
+---
+  python extractor_hidroponia.py planilla.xlsx
+  python extractor_hidroponia.py planilla.xlsx --hoja "Tandas Hidroponia 2"
+  python extractor_hidroponia.py planilla.xlsx --salida dataset.csv --reporte
+
+Requiere: pip install openpyxl
+"""
+
+import argparse, csv, re, statistics, sys, collections
+import openpyxl
+from openpyxl.utils import get_column_letter
+
+# --------------------------------------------------------------------------
+# DICCIONARIO DE COLORES
+# Extraído de los bloques de leyenda que están escondidos a la derecha de los
+# datos en la propia planilla (hoja 1: RK956; hoja 2: AER573).
+# --------------------------------------------------------------------------
+
+# Relleno sólido = a qué tanque está conectada la tanda ese día.
+# OJO: la leyenda dice que el tanque 2 es 666666, pero ese color no se usa
+# nunca en los datos; el que se usa en la práctica es 999999. Se mapean ambos.
+TANQUE_POR_RELLENO = {
+    'FFD9D9D9': 1,   # gris claro  -> Tanque 1 (izq)
+    'FF999999': 2,   # gris medio  -> Tanque 2 (der)   <- el usado en la práctica
+    'FF666666': 2,   # gris oscuro -> Tanque 2 (según leyenda, sin uso real)
+    'FF6FA8DC': 3,   # azul        -> Tanque 3
+}
+
+# Color del borde inferior = evento de manejo ocurrido ese día.
+EVENTO_POR_BORDE = {
+    'FFFFFF00': 'CAMBIO_80_TANQUE',  # amarillo  -> recambio del 80% del tanque
+    'FFFF00FF': 'CAMBIO_TANQUE',     # magenta   -> maniobra de cambio de tanque
+    'FF9900FF': 'AGREGADO_SALES',    # violeta   -> agregado de sales
+    'FF00FF00': 'BOVEL',             # verde     -> Bovel / Metarhizium
+    'FFFF9900': 'ESTEN_80',          # naranja   -> Esten 80
+    'FF980000': 'COSECHA_FIN',       # bordó     -> cosecha (cierre del ciclo)
+    'FF00FFFF': 'G_A_F1',            # cyan      -> pasaje de germinación a fase 1
+}
+COLUMNAS_EVENTO = ['AGREGADO_SALES', 'CAMBIO_TANQUE', 'CAMBIO_80_TANQUE',
+                   'BOVEL', 'ESTEN_80', 'COSECHA_FIN', 'G_A_F1']
+
+# Rango físico aceptable de pH. Fuera de esto el dato está mal cargado.
+PH_MIN, PH_MAX = 2.0, 10.0
+
+DIAS_SEMANA = {'Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'}
+# Textos de los bloques de leyenda: NO son etiquetas de tanda, hay que ignorarlos.
+TEXTO_IGNORAR = {
+    # textos de los bloques de leyenda
+    'AGREGADO DE SALES','BOVEL - METARHIZIUM','CAMBIO A TANQUE 1 (IZQ)',
+    'CAMBIO A TANQUE 2 (DER)','CAMBIO A TANQUE 3','CAMBIO TANQUE','COSECHA',
+    'ESTEN 80','RECAMBIO 80% TANQUE','MICORRIZADO','G A F1','F1 A F2',
+    'TANQUE 1','TANQUE 2','MICORRIZ - TRICOD - BACILUS',
+    # anotaciones sueltas del operador
+    'MURIÓ','MURIO','SIGUE EN PESTAÑA SIGUIENTE',
+}
+# '(T8 era acá)' y similares: anotaciones de dónde estaba antes una tanda.
+RE_ANOTACION = re.compile(r'^\(.*\)$')
+# '5.2.' y otros restos numéricos sueltos.
+RE_SOLO_NUM = re.compile(r'^[\d.,\s]+$')
+
+# --------------------------------------------------------------------------
+# LECTURA DE FORMATO
+# --------------------------------------------------------------------------
+
+def color_relleno(celda):
+    """RGB del relleno sólido, o None si la celda no está pintada."""
+    f = celda.fill
+    if not f or f.fill_type != 'solid':
+        return None
+    try:
+        v = f.start_color.rgb
+        if isinstance(v, str) and v not in ('00000000', 'FFFFFFFF'):
+            return v
+    except Exception:
+        pass
+    return None
+
+
+def color_borde_inferior(celda):
+    """RGB del borde inferior si tiene color propio. Ignora el negro (grilla)."""
+    lado = celda.border.bottom
+    if lado is None or lado.style is None:
+        return None
+    try:
+        rgb = lado.color.rgb
+        if isinstance(rgb, str) and rgb != 'FF000000':
+            return rgb
+    except Exception:
+        pass
+    return None
+
+
+def a_numero(v):
+    """Convierte a float. '-' y vacío -> None (dato faltante)."""
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if s in ('-', '', '--'):
+            return None
+        try:
+            return float(s.replace(',', '.'))
+        except ValueError:
+            return None
+    return None
+
+# --------------------------------------------------------------------------
+# PARSEO DE ETIQUETAS DE COSECHA
+# --------------------------------------------------------------------------
+
+# Acepta un sufijo de letra tras el número ('T174A- Alb' es una sub-tanda
+# distinta de 'T174- Alb' y debe conservar su propio ID para no colisionar).
+RE_TANDA_T = re.compile(r'^T\s*(\d+)([A-Za-z]?)\s*[-–]?\s*(.*)$')   # 'T202 Alb', 'T174A- Alb'
+RE_TANDA_R = re.compile(r'^R\s*(\d+)\s*$', re.I)               # 'R9'  (rúcula)
+RE_BERRO   = re.compile(r'^Berro', re.I)                       # 'Berro', 'Berro + Rúcula'
+
+
+def slug(texto):
+    """'Esquejes Alb' -> 'ESQUEJESALB'. Sirve como prefijo de ID estable."""
+    return re.sub(r'[^A-Z0-9]', '', texto.upper().replace('Ú', 'U').replace('Á', 'A')
+                  .replace('É', 'E').replace('Í', 'I').replace('Ó', 'O'))[:14]
+
+
+def parsear_etiqueta(texto):
+    """
+    Devuelve (serie, numero, cultivo, fraccion) o None si no es una etiqueta
+    de cosecha. `numero` en None significa "numerar por orden de aparición".
+    `fraccion` marca las tandas anotadas como '1/2' (media torre).
+    """
+    s = texto.strip()
+    if (not s or s in DIAS_SEMANA or s == '-' or s.upper() in TEXTO_IGNORAR
+            or RE_ANOTACION.match(s) or RE_SOLO_NUM.match(s)):
+        return None
+
+    m = RE_TANDA_T.match(s)
+    if m:
+        resto = m.group(3).strip()
+        fraccion = '1/2' if '1/2' in resto else '1'
+        cultivo = resto.replace('1/2', '').strip(' -') or 'Alb'
+        return ('T', f'{m.group(1)}{m.group(2).upper()}', cultivo, fraccion)
+
+    m = RE_TANDA_R.match(s)
+    if m:
+        return ('R', int(m.group(1)), 'Rúcula', '1')
+
+    # Tandas rotuladas con el nombre del cultivo en vez de un código:
+    # 'Berro', 'Rúcula', 'Cilantro', 'Perejil', 'Esquejes Alb', 'Tmix - Alb'.
+    # Se numeran por orden de aparición porque en la planilla no llevan número.
+    cultivo = 'Alb' if s.upper().startswith('TMIX') else s
+    return (slug(s), None, cultivo, '1')
+
+# --------------------------------------------------------------------------
+# LOCALIZACIÓN DE COSECHAS
+# --------------------------------------------------------------------------
+
+def encontrar_cosechas(ws, contadores=None):
+    """
+    Recorre la hoja buscando etiquetas de cosecha.
+
+    Una COSECHA son todos los pares de columnas que llevan su etiqueta. No
+    siempre arrancan el mismo día: 'T120 - Alb' aparece en las columnas NC/NE
+    en la fila 898 y otra vez en NG/NI en la 901 — son cuatro tandas de la
+    misma cosecha, dos que empiezan tres días después. Por eso se agrupa por
+    (serie, número) y cada columna guarda SU propia fila de arranque.
+
+    Variantes como 'T128- Alb' y 'T128- Alb 1/2' son la misma cosecha (la
+    segunda es media torre). 'T174A- Alb' en cambio es una sub-tanda distinta
+    de 'T174- Alb' y conserva su propio ID.
+
+    Devuelve lista de dicts: {serie, numero, columnas[], meta{col: (cultivo, fraccion, fila_label)}}
+    """
+    if contadores is None:
+        contadores = collections.Counter()
+
+    crudo = []
+    for fila in range(1, ws.max_row + 1):
+        for col in range(3, ws.max_column + 1):
+            v = ws.cell(fila, col).value
+            if not isinstance(v, str):
+                continue
+            p = parsear_etiqueta(v)
+            if p:
+                crudo.append((p, fila, col))
+
+    # las etiquetas sin número (cultivos sueltos) se numeran por orden de aparición
+    grupos = collections.defaultdict(dict)
+    asignado = {}
+    for (serie, numero, cultivo, fraccion), fila, col in sorted(crudo, key=lambda x: (x[1], x[2])):
+        if numero is None:
+            clave_pos = (serie, fila)
+            if clave_pos not in asignado:
+                contadores[serie] += 1
+                asignado[clave_pos] = contadores[serie]
+            numero = asignado[clave_pos]
+        grupos[(serie, numero)][col] = (cultivo, fraccion, fila)
+
+    cosechas = []
+    for (serie, numero), meta in grupos.items():
+        cosechas.append(dict(serie=serie, numero=numero,
+                             columnas=sorted(meta), meta=meta))
+    cosechas.sort(key=lambda c: (min(m[2] for m in c['meta'].values()), c['columnas'][0]))
+    return cosechas
+
+
+def limite_inferior(ws, col, fila_inicio):
+    """
+    Hasta dónde llega esta tanda en su columna: se corta si aparece la etiqueta
+    de OTRA cosecha más abajo en la misma columna (reutilización de espacio).
+    """
+    for r in range(fila_inicio + 1, ws.max_row + 1):
+        v = ws.cell(r, col).value
+        if isinstance(v, str) and parsear_etiqueta(v):
+            return r - 1
+    return ws.max_row
+
+# --------------------------------------------------------------------------
+# EXTRACCIÓN
+# --------------------------------------------------------------------------
+
+def orden_del_par(izquierda, derecha):
+    """
+    Decide si un par de columnas es (pH, PPM) o (PPM, pH), y en qué escala.
+
+    El pH vive entre 3 y 9. La conductividad viene en dos escalas según la hoja:
+    ppm (50 a 2500, inconfundible) o mS/cm (0,3 a 6, que se solapa con el pH).
+    Por eso: si una de las dos columnas tiene valores grandes, esa es la PPM y
+    listo. Si las dos son chicas, estamos en mS/cm y se elige como pH la que
+    caiga dentro del rango de pH.
+
+    Devuelve (offset_ph, offset_ppm, unidad).
+    """
+    mi = statistics.median(izquierda) if izquierda else None
+    md = statistics.median(derecha) if derecha else None
+
+    # caso ppm: una de las dos columnas es claramente de otra magnitud
+    if mi is not None and mi > 20 and (md is None or md <= 20):
+        return 1, 0, 'ppm'
+    if md is not None and md > 20 and (mi is None or mi <= 20):
+        return 0, 1, 'ppm'
+
+    # caso mS/cm: las dos son chicas -> gana la que esté en rango de pH
+    izq_es_ph = mi is not None and 3.0 <= mi <= 9.0
+    der_es_ph = md is not None and 3.0 <= md <= 9.0
+    if izq_es_ph and not der_es_ph:
+        return 0, 1, 'mS/cm'
+    if der_es_ph and not izq_es_ph:
+        return 1, 0, 'mS/cm'
+    # ambas plausibles (o ninguna): la convención de la planilla es (pH, PPM)
+    return 0, 1, 'mS/cm'
+
+
+def extraer_cosecha(ws, nombre_hoja, cosecha, huecos_max=10):
+    """
+    Extrae todas las filas de una cosecha. Un par de columnas = una TANDA,
+    numerada de izquierda a derecha. Cada tanda arranca en su propia fila.
+    """
+    filas = []
+    for indice_tanda, col in enumerate(cosecha['columnas'], start=1):
+        cultivo_col, fraccion_col, fila_label = cosecha['meta'][col]
+        tope = limite_inferior(ws, col, fila_label)
+
+        izq, der = [], []
+        for r in range(fila_label + 1, tope + 1):
+            a = a_numero(ws.cell(r, col).value)
+            b = a_numero(ws.cell(r, col + 1).value)
+            if a is not None:
+                izq.append(a)
+            if b is not None:
+                der.append(b)
+        if not izq and not der:
+            continue
+        off_ph, off_ppm, unidad = orden_del_par(izq, der)
+
+        tanque_previo = None
+        vacias_seguidas = 0
+        dia = 0
+        for r in range(fila_label + 1, tope + 1):
+            c_ph = ws.cell(r, col + off_ph)
+            c_ppm = ws.cell(r, col + off_ppm)
+            hay_algo = (c_ph.value is not None or c_ppm.value is not None
+                        or color_relleno(c_ph) is not None)
+            if not hay_algo:
+                vacias_seguidas += 1
+                if vacias_seguidas >= huecos_max:
+                    break
+                continue
+            vacias_seguidas = 0
+            dia += 1
+
+            eventos = set()
+            for c in (c_ph, c_ppm):
+                e = EVENTO_POR_BORDE.get(color_borde_inferior(c))
+                if e:
+                    eventos.add(e)
+
+            tanque = TANQUE_POR_RELLENO.get(color_relleno(c_ph))
+            traspaso = int(tanque is not None and tanque != tanque_previo)
+            tanque_previo = tanque
+
+            valor_ph = a_numero(c_ph.value)
+            valor_ppm = a_numero(c_ppm.value)
+
+            # En la escala ppm los dos valores son inconfundibles (pH < 10,
+            # conductividad > 20). Cuando aparecen invertidos es porque quien
+            # cargó ese día puso los números al revés en esa fila puntual.
+            # Se corrige y se deja marcado en ORDEN_CORREGIDO.
+            orden_corregido = 0
+            if (unidad == 'ppm' and valor_ph is not None and valor_ppm is not None
+                    and valor_ph > 20 and valor_ppm < PH_MAX):
+                valor_ph, valor_ppm = valor_ppm, valor_ph
+                orden_corregido = 1
+
+            fecha = ws.cell(r, 2).value
+            registro = {
+                'ID_COSECHA': f"{cosecha['serie']}{cosecha['numero']}",
+                'ID_TANDA': indice_tanda,
+                'ID_TANQUE': tanque,
+                'FECHA': fecha.date().isoformat() if hasattr(fecha, 'date') else fecha,
+                'PH': valor_ph,
+                'PPM': valor_ppm,
+                'UNIDAD': unidad,
+                'ORDEN_CORREGIDO': orden_corregido,
+                'TRASPASO_TANQUE': traspaso,
+                'CULTIVO': cultivo_col,
+                'FRACCION': fraccion_col,
+                'DIA_DESDE_INICIO': dia,
+                'HOJA': nombre_hoja,
+                'COLUMNA_XLSX': get_column_letter(col),
+                'FILA_XLSX': r,
+            }
+            for k in COLUMNAS_EVENTO:
+                registro[k] = int(k in eventos)
+            filas.append(registro)
+    return filas
+
+
+CAMPOS = (['ID_COSECHA', 'ID_TANDA', 'ID_TANQUE', 'FECHA', 'PH', 'PPM', 'UNIDAD',
+           'ORDEN_CORREGIDO', 'TRASPASO_TANQUE'] + COLUMNAS_EVENTO +
+          ['CULTIVO', 'FRACCION', 'DIA_DESDE_INICIO', 'HOJA', 'COLUMNA_XLSX', 'FILA_XLSX'])
+
+
+def main():
+    ap = argparse.ArgumentParser(description='Extrae el dataset de la planilla de hidroponía.')
+    ap.add_argument('xlsx', help='Ruta al archivo .xlsx')
+    ap.add_argument('--hoja', action='append',
+                    help='Hoja a procesar (repetible). Por defecto: todas las "Tandas Hidroponia*"')
+    ap.add_argument('--salida', default='dataset_hidroponia.csv')
+    ap.add_argument('--cultivo', default=None,
+                    help="Filtra por cultivo, por substring y sin distinguir mayúsculas. "
+                         "Ej: --cultivo Alb deja sólo albahaca.")
+    ap.add_argument('--reporte', action='store_true', help='Imprime resumen por cosecha')
+    args = ap.parse_args()
+
+    wb = openpyxl.load_workbook(args.xlsx, data_only=True)
+    hojas = args.hoja or [h for h in wb.sheetnames if h.lower().startswith('tandas')]
+    if not hojas:
+        sys.exit('No se encontró ninguna hoja de tandas.')
+
+    todas = []
+    contadores = collections.Counter()   # numeración global, no se reinicia por hoja
+    for nombre in hojas:
+        ws = wb[nombre]
+        cosechas = encontrar_cosechas(ws, contadores)
+        print(f'[{nombre}] {len(cosechas)} cosechas detectadas', file=sys.stderr)
+        for cos in cosechas:
+            todas.extend(extraer_cosecha(ws, nombre, cos))
+
+    # --- solapamiento entre hojas ---
+    # La hoja 1 sigue unas semanas dentro del rango de la hoja 2 (T128 a T133
+    # quedaron anotadas en las dos). Para cada cosecha repetida se conserva la
+    # hoja que la tiene más completa y se descarta la otra.
+    por_cosecha = collections.defaultdict(collections.Counter)
+    for r in todas:
+        por_cosecha[r['ID_COSECHA']][r['HOJA']] += 1
+    descartes = {}
+    for cid, hojas_ in por_cosecha.items():
+        if len(hojas_) > 1:
+            ganadora = hojas_.most_common(1)[0][0]
+            descartes[cid] = ganadora
+            for h, n in hojas_.items():
+                if h != ganadora:
+                    print(f'  solapamiento: {cid} aparece en {len(hojas_)} hojas; '
+                          f'se descartan {n} filas de "{h}"', file=sys.stderr)
+    if descartes:
+        todas = [r for r in todas
+                 if r['ID_COSECHA'] not in descartes or r['HOJA'] == descartes[r['ID_COSECHA']]]
+
+    # --- filtro de cultivo ---
+    if args.cultivo:
+        antes = len(todas)
+        aguja = args.cultivo.lower()
+        todas = [r for r in todas if aguja in r['CULTIVO'].lower()]
+        print(f'filtro cultivo "{args.cultivo}": {antes} -> {len(todas)} filas', file=sys.stderr)
+
+    # --- control de calidad ---
+    corregidas = sum(r['ORDEN_CORREGIDO'] for r in todas)
+    if corregidas:
+        print(f'{corregidas} filas con pH y PPM invertidos en el origen: corregidas '
+              f'(ver columna ORDEN_CORREGIDO)', file=sys.stderr)
+    fuera = [r for r in todas if r['PH'] is not None and not (PH_MIN < r['PH'] < PH_MAX)]
+    if fuera:
+        cols = sorted({(r['HOJA'], r['COLUMNA_XLSX']) for r in fuera})
+        print(f'AVISO: {len(fuera)} filas con pH fuera de rango en {len(cols)} columnas: '
+              f'{cols[:8]}', file=sys.stderr)
+
+    todas.sort(key=lambda r: (r['HOJA'], r['FILA_XLSX'], r['COLUMNA_XLSX']))
+    with open(args.salida, 'w', newline='', encoding='utf-8') as fh:
+        w = csv.DictWriter(fh, fieldnames=CAMPOS)
+        w.writeheader()
+        for r in todas:
+            w.writerow({k: ('' if r.get(k) is None else r[k]) for k in CAMPOS})
+
+    print(f'{len(todas)} filas -> {args.salida}', file=sys.stderr)
+
+    if args.reporte:
+        por = collections.defaultdict(list)
+        for r in todas:
+            por[r['ID_COSECHA']].append(r)
+        print(f'\n{"COSECHA":10} {"TANDAS":>6} {"FILAS":>6} {"DESDE":>11} {"HASTA":>11}  '
+              f'{"TANQUES":<10} {"UNID":<6} EVENTOS', file=sys.stderr)
+        for cid, rs in sorted(por.items(), key=lambda kv: kv[1][0]['FILA_XLSX']):
+            tq = sorted({r['ID_TANQUE'] for r in rs if r['ID_TANQUE']})
+            ev = {k: sum(r[k] for r in rs) for k in COLUMNAS_EVENTO}
+            ev = ' '.join(f'{k}={v}' for k, v in ev.items() if v)
+            print(f'{cid:10} {len(set(r["ID_TANDA"] for r in rs)):>6} {len(rs):>6} '
+                  f'{min(r["FECHA"] for r in rs):>11} {max(r["FECHA"] for r in rs):>11}  '
+                  f'{str(tq):<10} {rs[0]["UNIDAD"]:<6} {ev}', file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()

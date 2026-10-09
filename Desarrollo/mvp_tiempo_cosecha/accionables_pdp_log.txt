@@ -1,0 +1,19 @@
+=== Dependencia parcial (PDP) — efecto en la DURACIÓN predicha (días) ===
+  ppm_mean                     de p5 a p95 -> duración 49.1 a 49.0  (Δ -0.1 d)
+  ppm_min                      de p5 a p95 -> duración 49.0 a 48.9  (Δ -0.1 d)
+  ph_mean                      de p5 a p95 -> duración 49.0 a 48.9  (Δ -0.0 d)
+  ph_std                       de p5 a p95 -> duración 49.0 a 49.0  (Δ +0.0 d)
+  n_BOVEL                      de p5 a p95 -> duración 48.8 a 49.6  (Δ +0.8 d)
+  n_AGREGADO_SALES             de p5 a p95 -> duración 49.0 a 48.9  (Δ -0.0 d)
+  dias_desde_AGREGADO_SALES    de p5 a p95 -> duración 49.0 a 48.9  (Δ -0.0 d)
+
+Guardado: accionables_pdp.png
+
+=== Magnitud del efecto accionable (|Δ duración| de p5 a p95) ===
+  n_BOVEL                      +0.8 d
+  ppm_mean                     -0.1 d
+  ppm_min                      -0.1 d
+  n_AGREGADO_SALES             -0.0 d
+  dias_desde_AGREGADO_SALES    -0.0 d
+  ph_std                       +0.0 d
+  ph_mean                      -0.0 d

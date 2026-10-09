@@ -1,0 +1,45 @@
+============================================================
+CAMPEÓN CatBoost — métricas
+============================================================
+CV agrupada (GroupKFold): MAE 2.786 | MedAE 1.912 | RMSE 4.039
+Test temporal (último año, 9820 landmarks): MAE 2.882 | MedAE 2.185 | RMSE 3.842
+
+============================================================
+SHAP — factores más influyentes (|SHAP| medio)
+============================================================
+  hist_dur_reciente5           2.275
+  hist_dur_mismomes            1.045
+  hist_dur_global              0.852
+  hist_n_mismomes              0.770
+  mes_cos                      0.698
+  cl_prev60_temp               0.532
+  cl_fc_dli_next7              0.503
+  cl_prev60_dli                0.495
+  mes_sin                      0.458
+  mes_inicio                   0.390
+  hist_dur_sd_mismomes         0.390
+  cl_dli_min_ciclo             0.385
+  cl_prev60_dli_anom           0.375
+  n_BOVEL                      0.347
+  cl_fut30_dli_clim            0.335
+  cl_dli_mean_ciclo            0.334
+  cl_fut14_dli_clim            0.263
+  cl_dli_last14                0.200
+  cl_fut7_dli_clim             0.190
+  cl_fc_dli_next7_anom         0.156
+Guardado: shap_catboost.csv, shap_catboost.png
+
+============================================================
+Intervalos conformal (CQR) con CatBoost — objetivo 80%
+============================================================
+  naive (cuantiles): cobertura 51.0% | ancho 4.9 d
+  CQR   (conformal): cobertura 80.8% | ancho 9.7 d  (obj. 80%)
+
+  Cobertura/ancho CQR por etapa del ciclo:
+    día  3-10 : cob  80.6% | ancho 10.5 d
+    día 11-20 : cob  79.8% | ancho 9.7 d
+    día 21-30 : cob  80.3% | ancho 9.1 d
+    día 31-45 : cob  81.6% | ancho 9.5 d
+    día 46-100: cob  82.8% | ancho 9.7 d
+
+LISTO.

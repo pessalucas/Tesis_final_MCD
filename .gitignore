@@ -1,0 +1,17 @@
+# Entornos virtuales y cachés (regenerables, pesados)
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Config local de la sesión (no es contenido de la tesis)
+.claude/
+
+# Temporales
+*.tmp
+*.bak

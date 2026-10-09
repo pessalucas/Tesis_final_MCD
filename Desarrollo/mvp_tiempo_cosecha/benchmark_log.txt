@@ -1,0 +1,49 @@
+Features: 90
+TRAIN: 15041 landmarks | 142 cosechas
+TEST : 9820 landmarks | 42 cosechas (2025-09-28 -> 2026-07-05)
+
+Dummy (D=media train): MAE 8.35 | RMSE 9.18
+
+>>> ElasticNet (lineal): 25 configs x 5 folds (grid=25)...
+    TEST -> MAE 5.222 | MedAE 4.503 | RMSE 6.438  (CV interno MAE 3.421) [63s]
+    best: {'m__l1_ratio': 0.9, 'm__alpha': 0.01}
+
+>>> kNN (instancias): 24 configs x 5 folds (grid=24)...
+    TEST -> MAE 4.260 | MedAE 3.927 | RMSE 5.103  (CV interno MAE 2.967) [27s]
+    best: {'m__weights': 'distance', 'm__p': 1, 'm__n_neighbors': 50}
+
+>>> RandomForest (bagging): 50 configs x 5 folds (grid=192)...
+    TEST -> MAE 3.502 | MedAE 3.124 | RMSE 4.464  (CV interno MAE 2.872) [2544s]
+    best: {'m__n_estimators': 500, 'm__min_samples_leaf': 10, 'm__max_features': 0.3, 'm__max_depth': 10}
+
+>>> LightGBM (boosting): 50 configs x 5 folds (grid=27648)...
+    TEST -> MAE 3.380 | MedAE 2.601 | RMSE 4.496  (CV interno MAE 2.742) [89s]
+    best: {'m__subsample': 0.8, 'm__reg_lambda': 0, 'm__num_leaves': 63, 'm__n_estimators': 500, 'm__min_child_samples': 100, 'm__max_depth': 6, 'm__learning_rate': 0.05, 'm__colsample_bytree': 0.6}
+
+>>> XGBoost (boosting): 50 configs x 5 folds (grid=25920)...
+    TEST -> MAE 3.636 | MedAE 3.132 | RMSE 4.522  (CV interno MAE 2.807) [174s]
+    best: {'m__subsample': 0.7, 'm__reg_lambda': 3, 'm__reg_alpha': 0, 'm__n_estimators': 300, 'm__min_child_weight': 5, 'm__max_depth': 8, 'm__learning_rate': 0.08, 'm__colsample_bytree': 0.6}
+
+>>> CatBoost (boosting): 50 configs x 5 folds (grid=576)...
+    TEST -> MAE 2.882 | MedAE 2.185 | RMSE 3.842  (CV interno MAE 2.798) [6928s]
+    best: {'m__subsample': 0.7, 'm__learning_rate': 0.03, 'm__l2_leaf_reg': 1, 'm__iterations': 500, 'm__depth': 6}
+
+>>> MLP (red neuronal): 48 configs x 5 folds (grid=48)...
+    TEST -> MAE 7.162 | MedAE 5.008 | RMSE 9.603  (CV interno MAE 3.055) [2093s]
+    best: {'m__learning_rate_init': 0.001, 'm__hidden_layer_sizes': (128, 64), 'm__alpha': 0.001, 'm__activation': 'relu'}
+
+==============================================================================
+RANKING — TEST TEMPORAL (último año, 42 cosechas). Ordenado por MAE.
+==============================================================================
+ # Modelo                         MAE   MedAE    RMSE  CV-int    seg
+   Dummy (media)                 8.35    7.60    9.18       —      —
+ 1 CatBoost (boosting)           2.88    2.18    3.84    2.80   6928
+ 2 LightGBM (boosting)           3.38    2.60    4.50    2.74     89
+ 3 RandomForest (bagging)        3.50    3.12    4.46    2.87   2544
+ 4 XGBoost (boosting)            3.64    3.13    4.52    2.81    174
+ 5 kNN (instancias)              4.26    3.93    5.10    2.97     27
+ 6 ElasticNet (lineal)           5.22    4.50    6.44    3.42     63
+ 7 MLP (red neuronal)            7.16    5.01    9.60    3.06   2093
+
+Guardado: benchmark_resultados.csv
+CAMPEÓN: CatBoost (boosting) (test MAE 2.882 d)

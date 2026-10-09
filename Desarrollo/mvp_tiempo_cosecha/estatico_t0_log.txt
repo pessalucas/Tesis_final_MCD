@@ -1,0 +1,39 @@
+Features T=0: 27 (estáticas 5 + historia 5 + clima-inicio 17)
+  clima-inicio: ['cl_prev60_temp', 'cl_prev60_dli', 'cl_prev60_dli_anom', 'cl_fut7_dli_clim', 'cl_fut14_dli_clim', 'cl_fut30_dli_clim', 'cl_fut30_temp_clim', 'cl_fut30_gdd_clim', 'cl_fc_temp_d1', 'cl_fc_temp_d7', 'cl_fc_dli_d1', 'cl_fc_dli_d7', 'cl_fc_temp_next7', 'cl_fc_dli_next7', 'cl_fc_prec_next7', 'cl_fc_cloud_next7', 'cl_fc_dli_next7_anom']
+Filas T=0 (una por tanda): 565 | día actual medio en T=0: 3.0
+TRAIN T=0: 335 tandas | TEST T=0: 230 tandas (42 cosechas)
+
+  LinearReg (OLS)        done [0s]
+  Ridge                  done [2s]
+  GLM Gamma              done [0s]
+  Árbol simple (shallow) done [0s]
+  ElasticNet             done [0s]
+  kNN                    done [0s]
+  RandomForest           done [18s]
+  LightGBM               done [2s]
+  XGBoost                done [6s]
+  CatBoost               done [30s]
+  MLP                    done [7s]
+
+==========================================================================
+RANKING T=0 — proyectar duración al inicio del ciclo (test temporal)
+==========================================================================
+ # Modelo                                        MAE  MedAE   RMSE
+ 1 CatBoost CAMPEÓN @T=0 (features completas)   3.12   2.75   3.88
+ 2 CatBoost [T=0]                               3.40   2.62   4.29
+ 3 LightGBM [T=0]                               3.57   2.77   4.40
+ 4 Promedio por mes                             3.66   2.54   4.86
+ 5 RandomForest [T=0]                           3.72   3.20   4.53
+ 6 LinearReg (OLS) [T=0]                        3.80   3.11   5.00
+ 7 XGBoost [T=0]                                4.08   3.70   4.92
+ 8 kNN [T=0]                                    4.22   4.38   4.83
+ 9 Árbol simple (shallow) [T=0]                 4.94   4.34   5.95
+10 GLM Gamma [T=0]                              5.72   6.00   6.54
+11 ElasticNet [T=0]                             6.89   7.21   7.88
+12 Ridge [T=0]                                  7.18   7.48   8.19
+13 MLP [T=0]                                    7.37   6.73   8.54
+14 Dummy (media D)                              7.68   8.90   8.61
+
+Mejor modelo dedicado T=0: CatBoost [T=0] (MAE 3.40)
+Campeón general @T=0:      MAE 3.12
+=> El modelo dedicado NO gana por 0.28 d (NO se justifica: el campeón ya alcanza)

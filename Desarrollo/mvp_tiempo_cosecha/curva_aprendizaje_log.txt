@@ -1,0 +1,12 @@
+Cosechas disponibles para entrenar: 142 | test fijo: 42 cosechas
+  n_cosechas= 20: MAE test = 4.803 ± 0.927
+  n_cosechas= 40: MAE test = 4.108 ± 0.652
+  n_cosechas= 60: MAE test = 3.475 ± 0.382
+  n_cosechas= 80: MAE test = 3.428 ± 0.359
+  n_cosechas=100: MAE test = 3.323 ± 0.158
+  n_cosechas=120: MAE test = 3.344 ± 0.268
+  n_cosechas=142: MAE test = 3.133 ± 0.000
+
+Mejora total 4.80 -> 3.13 d
+Pendiente al final: -0.0096 d/cosecha -> SIGUE BAJANDO: más cosechas ayudarían
+Guardado: curva_aprendizaje.png, curva_aprendizaje.csv

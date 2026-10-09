@@ -1,0 +1,51 @@
+Cosechas para modelar (aisladas, rend>0): 66 | rendimiento medio 1346 plantas
+Correlaciones (Spearman) con el rendimiento:
+  dur            -0.378
+  dur_cb_t0      -0.363
+  mes_sin        -0.144
+  mes_cos        +0.439
+  n_tandas       +0.403
+  cl_dli_ciclo   +0.423
+  cl_fut30_dli   +0.458
+  cl_prev60_dli  +0.298
+
+==============================================================================
+RENDIMIENTO — ranking de enfoques (MAE en plantas; media real 1346)
+==============================================================================
+                   enfoque     features  MAE  MedAE  RMSE
+Baseline: promedio por mes            -  290    213   382
+              ML: LightGBM           T0  302    216   409
+                   ML: kNN    T0+DUR_cb  302    250   387
+                   ML: OLS           T0  304    261   392
+             ML: GLM Gamma   FULL_ciclo  307    246   402
+              ML: LightGBM    T0+DUR_cb  307    207   412
+                   ML: kNN           T0  308    253   395
+             ML: GLM Gamma           T0  309    252   402
+                   ML: OLS   FULL_ciclo  310    252   401
+              ML: LightGBM   FULL_ciclo  310    244   412
+          ML: RandomForest           T0  311    258   386
+             ML: GLM Gamma    T0+DUR_cb  311    256   401
+                   ML: OLS    T0+DUR_cb  312    279   396
+                 ML: Ridge   FULL_ciclo  313    251   404
+                 ML: Ridge           T0  314    255   404
+                   ML: kNN   FULL_ciclo  314    256   403
+                 ML: Ridge    T0+DUR_cb  315    256   404
+          ML: RandomForest    T0+DUR_cb  315    267   391
+              ML: CatBoost DUR_catboost  317    231   434
+             ML: Árbol(sh)           T0  320    262   403
+              ML: CatBoost    T0+DUR_cb  321    238   418
+          ML: RandomForest   FULL_ciclo  322    262   403
+              ML: CatBoost   FULL_ciclo  323    223   426
+             ML: Árbol(sh)    T0+DUR_cb  324    262   411
+              ML: CatBoost           T0  327    249   423
+
+Mejor: Baseline: promedio por mes [-] -> MAE 290 plantas (22% del promedio)
+
+==============================================================================
+FORECASTING de volumen mensual (serie temporal)
+==============================================================================
+Serie mensual: 20 meses (2025-01-31 -> 2026-08-31)
+Naive estacional (mismo mes año previo), 8 meses test: MAE 1421 | MAPE 31%
+Holt-Winters: no disponible (ValueError); requiere statsmodels + >=2 ciclos.
+
+LISTO.
